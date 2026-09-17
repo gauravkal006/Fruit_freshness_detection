@@ -7,7 +7,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 from PIL import Image
-from flask import Flask, render_template, request, jsonify, Response
+from flask import Flask, render_template, request, jsonify, Response, send_from_directory
 
 # Filter warnings
 warnings.filterwarnings("ignore")
@@ -15,6 +15,10 @@ warnings.filterwarnings("ignore")
 # Initialize Flask app
 BASE_DIR = Path(__file__).resolve().parent
 app = Flask(__name__, static_folder=str(BASE_DIR / "static"), template_folder=str(BASE_DIR / "templates"))
+
+@app.route("/models/<path:filename>")
+def serve_models(filename):
+    return send_from_directory(BASE_DIR / "models", filename)
 
 # Display mapping for detected produce classes
 CLASS_DISPLAY_MAP = {
@@ -60,91 +64,77 @@ def get_model():
 
 def detect_and_draw_rot_spots(cv_img, produce_bbox, is_rotten):
     """
-    Locates rot, decay, and mold spots on produce items using combined CIE-LAB lightness
-    and HSV saturation analysis, highlighting them with bounding markers and location tags.
+    Locates rot and decay spots on produce items and highlights them with bounding markers and location tags.
+    Determines spatial quadrant (e.g., Upper-Left, Center, Lower-Right) of localized decay spots.
     """
     x1, y1, x2, y2 = produce_bbox
     crop_h = y2 - y1
     crop_w = x2 - x1
     
     if crop_h <= 10 or crop_w <= 10:
-        return cv_img, [], 0.0
+        return cv_img, []
         
     produce_crop = cv_img[y1:y2, x1:x2]
     lab_crop = cv2.cvtColor(produce_crop, cv2.COLOR_BGR2LAB)
-    hsv_crop = cv2.cvtColor(produce_crop, cv2.COLOR_BGR2HSV)
-    
     l_channel = lab_crop[:, :, 0]
-    sat_channel = hsv_crop[:, :, 1]
-    val_channel = hsv_crop[:, :, 2]
     
     mean_l = np.mean(l_channel)
     std_l = np.std(l_channel)
-    rot_thresh_val = max(25, int(mean_l - 1.1 * std_l))
+    rot_thresh_val = max(30, int(mean_l - 1.2 * std_l))
     
-    # Mask dark lesions (low L*) and low-sat brown decay patches
-    _, l_mask = cv2.threshold(l_channel, rot_thresh_val, 255, cv2.THRESH_BINARY_INV)
-    _, dark_mask = cv2.threshold(val_channel, 65, 255, cv2.THRESH_BINARY_INV)
-    
-    rot_mask = cv2.bitwise_or(l_mask, dark_mask)
+    _, rot_mask = cv2.threshold(l_channel, rot_thresh_val, 255, cv2.THRESH_BINARY_INV)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     rot_mask = cv2.morphologyEx(rot_mask, cv2.MORPH_OPEN, kernel)
-    rot_mask = cv2.morphologyEx(rot_mask, cv2.MORPH_CLOSE, kernel)
     
     contours, _ = cv2.findContours(rot_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     rot_spots = []
-    total_rot_pixels = 0
     
-    if contours:
+    if is_rotten and contours:
         contours = sorted(contours, key=cv2.contourArea, reverse=True)
-        crop_area = crop_h * crop_w
         
-        for idx, c in enumerate(contours):
+        for idx, c in enumerate(contours[:3]):
             spot_area = cv2.contourArea(c)
-            if spot_area > (crop_area * 0.005):
-                total_rot_pixels += spot_area
+            if spot_area > (crop_h * crop_w * 0.008):
+                sx, sy, sw, sh = cv2.boundingRect(c)
                 
-                if len(rot_spots) < 4 and (is_rotten or spot_area > crop_area * 0.02):
-                    sx, sy, sw, sh = cv2.boundingRect(c)
+                gx1 = x1 + sx
+                gy1 = y1 + sy
+                gx2 = gx1 + sw
+                gy2 = gy1 + sh
+                
+                cx = (gx1 + gx2) // 2
+                cy = (gy1 + gy2) // 2
+                
+                fx_center = (x1 + x2) / 2.0
+                fy_center = (y1 + y2) / 2.0
+                
+                rel_x = "Right" if cx > fx_center else "Left"
+                rel_y = "Lower" if cy > fy_center else "Upper"
+                
+                if abs(cx - fx_center) < crop_w * 0.15 and abs(cy - fy_center) < crop_h * 0.15:
+                    quadrant = "Center Region"
+                else:
+                    quadrant = f"{rel_y}-{rel_x} Region"
                     
-                    gx1 = x1 + sx
-                    gy1 = y1 + sy
-                    gx2 = gx1 + sw
-                    gy2 = gy1 + sh
-                    
-                    cx = (gx1 + gx2) // 2
-                    cy = (gy1 + gy2) // 2
-                    
-                    fx_center = (x1 + x2) / 2.0
-                    fy_center = (y1 + y2) / 2.0
-                    
-                    rel_x = "Right" if cx > fx_center else "Left"
-                    rel_y = "Lower" if cy > fy_center else "Upper"
-                    
-                    if abs(cx - fx_center) < crop_w * 0.15 and abs(cy - fy_center) < crop_h * 0.15:
-                        quadrant = "Center Region"
-                    else:
-                        quadrant = f"{rel_y}-{rel_x} Region"
-                        
-                    spot_info = {
-                        "spot_id": len(rot_spots) + 1,
-                        "location": quadrant,
-                        "x": cx,
-                        "y": cy,
-                        "width": sw,
-                        "height": sh
-                    }
-                    rot_spots.append(spot_info)
-                    
-                    if is_rotten:
-                        cv2.rectangle(cv_img, (gx1, gy1), (gx2, gy2), (0, 0, 255), 2)
-                        cv2.circle(cv_img, (cx, cy), 4, (0, 0, 255), -1)
-                        spot_label = f"ROT #{len(rot_spots)}: {quadrant}"
-                        font = cv2.FONT_HERSHEY_SIMPLEX
-                        cv2.putText(cv_img, spot_label, (gx1, max(15, gy1 - 5)), font, 0.45, (0, 0, 255), 1, cv2.LINE_AA)
-                        
-    rot_ratio = total_rot_pixels / float(crop_h * crop_w) if (crop_h * crop_w) > 0 else 0.0
-    return cv_img, rot_spots, rot_ratio
+                spot_info = {
+                    "spot_id": idx + 1,
+                    "location": quadrant,
+                    "x": cx,
+                    "y": cy,
+                    "width": sw,
+                    "height": sh
+                }
+                rot_spots.append(spot_info)
+                
+                # Draw rot spot bounding rectangle
+                cv2.rectangle(cv_img, (gx1, gy1), (gx2, gy2), (0, 0, 255), 2)
+                cv2.circle(cv_img, (cx, cy), 4, (0, 0, 255), -1)
+                
+                spot_label = f"ROT #{idx+1}: {quadrant}"
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                cv2.putText(cv_img, spot_label, (gx1, max(15, gy1 - 5)), font, 0.45, (0, 0, 255), 1, cv2.LINE_AA)
+                
+    return cv_img, rot_spots
 
 def draw_yolo_bounding_box_fixed(cv_img, bbox, display_label, top1_conf, is_rotten):
     """Draws YOLO bounding box and accent corners around detected fruit produce"""
@@ -177,7 +167,7 @@ def draw_yolo_bounding_box_fixed(cv_img, bbox, display_label, top1_conf, is_rott
     return cv_img
 
 def extract_produce_region(pil_img):
-    """Isolates fruit using adaptive aspect-preserving bounding box isolation."""
+    """Isolates fruit from background clutter using HSV color chroma thresholding."""
     cv_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
     h, w, _ = cv_img.shape
     
@@ -185,8 +175,8 @@ def extract_produce_region(pil_img):
     sat = hsv[:, :, 1]
     val = hsv[:, :, 2]
     
-    _, sat_mask = cv2.threshold(sat, 20, 255, cv2.THRESH_BINARY)
-    _, val_mask = cv2.threshold(val, 18, 250, cv2.THRESH_BINARY)
+    _, sat_mask = cv2.threshold(sat, 25, 255, cv2.THRESH_BINARY)
+    _, val_mask = cv2.threshold(val, 20, 245, cv2.THRESH_BINARY)
     produce_mask = cv2.bitwise_and(sat_mask, val_mask)
     
     contours, _ = cv2.findContours(produce_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -194,9 +184,9 @@ def extract_produce_region(pil_img):
     if contours:
         c = max(contours, key=cv2.contourArea)
         area = cv2.contourArea(c)
-        if area > (h * w * 0.015):
+        if area > (h * w * 0.02):
             x, y, bw, bh = cv2.boundingRect(c)
-            pad = 16
+            pad = 12
             x1 = max(0, x - pad)
             y1 = max(0, y - pad)
             x2 = min(w, x + bw + pad)
@@ -207,13 +197,13 @@ def extract_produce_region(pil_img):
                 cropped_pil = Image.fromarray(cv2.cvtColor(cropped_cv, cv2.COLOR_BGR2RGB))
                 return cropped_pil, (x1, y1, x2, y2), True
                 
-    x1, y1, x2, y2 = int(w * 0.05), int(h * 0.05), int(w * 0.95), int(h * 0.95)
+    x1, y1, x2, y2 = int(w * 0.08), int(h * 0.08), int(w * 0.92), int(h * 0.92)
     cropped_cv = cv_img[y1:y2, x1:x2]
     cropped_pil = Image.fromarray(cv2.cvtColor(cropped_cv, cv2.COLOR_BGR2RGB))
     return cropped_pil, (x1, y1, x2, y2), True
 
-def predict_with_multi_angle_tta(yolo_model, cropped_pil, full_pil=None):
-    """Evaluates produce item using multi-angle TTA ensembled across crop and full image."""
+def predict_with_multi_angle_tta(yolo_model, cropped_pil):
+    """Evaluates produce item from 4 cardinal angles (0°, 90°, 180°, 270°) and horizontal flip."""
     variants = [
         cropped_pil,
         cropped_pil.rotate(90, expand=True),
@@ -221,10 +211,7 @@ def predict_with_multi_angle_tta(yolo_model, cropped_pil, full_pil=None):
         cropped_pil.rotate(270, expand=True),
         cropped_pil.transpose(Image.FLIP_LEFT_RIGHT),
     ]
-    if full_pil:
-        variants.append(full_pil)
-        variants.append(full_pil.transpose(Image.FLIP_LEFT_RIGHT))
-        
+    
     all_raw_probs = []
     for var in variants:
         res = yolo_model.predict(var, device="cpu", verbose=False)[0]
@@ -236,10 +223,10 @@ def predict_with_multi_angle_tta(yolo_model, cropped_pil, full_pil=None):
     
     return top1_idx, top1_conf, avg_probs
 
-def compute_hierarchical_produce_analysis(yolo_model, avg_probs, rot_ratio=0.0):
+def compute_hierarchical_produce_analysis(yolo_model, avg_probs):
     """
     Stage 1: Identify Fruit Type (Apple, Banana, Orange)
-    Stage 2: Quantify Freshness % vs Spoilage % with rot ratio fusion
+    Stage 2: Quantify Freshness % vs Spoilage %
     """
     prob_dict = {}
     for idx, conf in enumerate(avg_probs):
@@ -271,19 +258,10 @@ def compute_hierarchical_produce_analysis(yolo_model, avg_probs, rot_ratio=0.0):
         
     total_type_prob = f_prob + r_prob
     if total_type_prob > 0:
-        raw_freshness = (f_prob / total_type_prob) * 100
-        raw_spoilage = (r_prob / total_type_prob) * 100
+        freshness_pct = (f_prob / total_type_prob) * 100
+        spoilage_pct = (r_prob / total_type_prob) * 100
     else:
-        raw_freshness, raw_spoilage = 50.0, 50.0
-        
-    # Fuse vision rot ratio if rot spots detected
-    if rot_ratio > 0.05:
-        spoilage_boost = min(40.0, rot_ratio * 250)
-        spoilage_pct = min(99.0, raw_spoilage + spoilage_boost)
-        freshness_pct = max(1.0, 100.0 - spoilage_pct)
-    else:
-        spoilage_pct = raw_spoilage
-        freshness_pct = raw_freshness
+        freshness_pct, spoilage_pct = 50.0, 50.0
         
     is_rotten = spoilage_pct > freshness_pct
     display_label = f"Fresh {detected_fruit_type}" if not is_rotten else f"Rotten {detected_fruit_type}"
@@ -322,19 +300,15 @@ def process_prediction():
         cropped_pil, (x1, y1, x2, y2), is_valid_fruit = extract_produce_region(pil_img)
         
         yolo_model = get_model()
-        top1_idx, top1_conf, avg_probs = predict_with_multi_angle_tta(yolo_model, cropped_pil, pil_img)
-        
-        cv_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-        
-        # Preliminary check for rot spot vision analysis
-        _, prelim_rot_spots, rot_ratio = detect_and_draw_rot_spots(cv_img.copy(), (x1, y1, x2, y2), True)
-        analysis = compute_hierarchical_produce_analysis(yolo_model, avg_probs, rot_ratio)
+        top1_idx, top1_conf, avg_probs = predict_with_multi_angle_tta(yolo_model, cropped_pil)
+        analysis = compute_hierarchical_produce_analysis(yolo_model, avg_probs)
         
         display_label = analysis["display_label"]
         is_rotten = analysis["is_rotten"]
         
+        cv_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
         annotated_cv = draw_yolo_bounding_box_fixed(cv_img, (x1, y1, x2, y2), display_label, analysis["type_confidence"] / 100.0, is_rotten)
-        annotated_cv, rot_spots, _ = detect_and_draw_rot_spots(annotated_cv, (x1, y1, x2, y2), is_rotten)
+        annotated_cv, rot_spots = detect_and_draw_rot_spots(annotated_cv, (x1, y1, x2, y2), is_rotten)
         
         _, buffer = cv2.imencode(".jpg", annotated_cv)
         img_b64 = base64.b64encode(buffer).decode("utf-8")
