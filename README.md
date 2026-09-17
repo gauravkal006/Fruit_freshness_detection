@@ -21,27 +21,6 @@ Using a fine-tuned **YOLOv11** classification backbone combined with LAB color-s
 
 ---
 
-## 🔄 Project Updates & Recent Improvements
-
-This codebase has undergone a major restructuring and cleanup to make it 100% production-ready for GitHub hosting and deployment:
-
-1. **Rebranding & Project Alignment**:
-   - Rebranded the project from *PerishPredict* to **Banana, Apple and Orange Freshness Prediction**.
-   - Updated UI headers, metadata, titles, and documentation.
-2. **Third-Party Sources & Dependency Cleanup**:
-   - Removed all previous external GitHub repository traces, dead dependencies, and bloated binary cache files (`.cache`, `__pycache__`, `dataset1/*.cache`).
-   - Consolidated nested repository folders into a clean, unified root structure.
-3. **Best Fine-Tuned Model Embedding**:
-   - Selected and packaged the fine-tuned **15-Epoch YOLOv11** produce classification model directly into `./models/best.pt` (~12.5 MB).
-   - Removed hardcoded local machine user paths (`C:\Users\HP\...`), enabling seamless execution on any operating system (Windows, Linux, macOS).
-4. **ONNX & TensorFlow Lite Integration**:
-   - Added support and documentation for exporting models to **ONNX** and **TensorFlow Lite (TFLite)** formats for high-speed cross-platform CPU server inference, edge device deployment, and mobile application compatibility.
-5. **GitHub Pages Ready**:
-   - Configured `index.html` at the project root for static hosting on **GitHub Pages**.
-   - Integrated a client-side vision processing fallback using HTML5 Canvas & color chrominance analysis so visitors to `https://gauravkal006.github.io/Fruit_freshness_detection/` can test live camera scanning and file uploads directly in their browser without requiring a running Python backend.
-
----
-
 ## ⚡ ONNX & TensorFlow Lite (TFLite) Integration
 
 To ensure maximum versatility across cloud servers, web applications, and edge/mobile hardware, the fine-tuned YOLOv11 model supports export and inference using **ONNX** and **TensorFlow Lite (TFLite)** formats.
