@@ -58,6 +58,7 @@
 
           <div class="webcam-container">
             <video id="webcamVideo" class="webcam-video" autoplay playsinline muted></video>
+            <img id="serverWebcamImg" class="webcam-video hidden" alt="Server Camera Stream">
             <canvas id="captureCanvas" class="hidden"></canvas>
           </div>
           
@@ -487,36 +488,42 @@
       }
     });
 
-    // Real-Time HTML5 Webcam Scanner Logic
+    // Real-Time HTML5 & Flask Hybrid Webcam Scanner Logic
     const webcamVideo = document.getElementById('webcamVideo');
+    const serverWebcamImg = document.getElementById('serverWebcamImg');
     const captureCanvas = document.getElementById('captureCanvas');
     const toggleCamBtn = document.getElementById('toggleCamBtn');
     let webcamStream = null;
     let scanInterval = null;
     let isProcessingFrame = false;
+    let isServerStreaming = false;
 
     toggleCamBtn.addEventListener('click', () => {
-      if (webcamStream) {
+      if (webcamStream || isServerStreaming) {
         stopWebcam();
       } else {
         startWebcam();
       }
     });
 
-    // Cascading Multi-Camera Launcher (Guarantees Internal or External Cam Opens)
+    // Cascading Hybrid Camera Launcher (HTML5 WASM -> Flask MJPEG Stream Fallback)
     async function startWebcam() {
       camAlert.classList.add('hidden');
       const selectedDeviceId = cameraSelect.value;
 
-      // Multi-level fallback sequence
-      const constraintOptions = [];
+      // Check if navigator.mediaDevices exists
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        useServerVideoStream();
+        return;
+      }
 
+      const constraintOptions = [];
       if (selectedDeviceId && selectedDeviceId !== 'default') {
-        constraintOptions.push({ video: { deviceId: { ideal: selectedDeviceId } } });
+        constraintOptions.push({ video: { deviceId: { ideal: selectedDeviceId }, width: { ideal: 640 }, height: { ideal: 480 } } });
         constraintOptions.push({ video: { deviceId: { exact: selectedDeviceId } } });
       }
-      constraintOptions.push({ video: { facingMode: 'user' } });
-      constraintOptions.push({ video: { facingMode: 'environment' } });
+      constraintOptions.push({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } } });
+      constraintOptions.push({ video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } } });
       constraintOptions.push({ video: true });
 
       let stream = null;
@@ -526,7 +533,7 @@
         try {
           stream = await navigator.mediaDevices.getUserMedia(constraint);
           if (stream && stream.getVideoTracks().length > 0) {
-            console.log("📷 Camera successfully opened with constraint:", constraint);
+            console.log("📷 HTML5 Camera opened with constraint:", constraint);
             break;
           }
         } catch (e) {
@@ -536,14 +543,35 @@
 
       if (stream) {
         webcamStream = stream;
+        webcamVideo.classList.remove('hidden');
+        if (serverWebcamImg) serverWebcamImg.classList.add('hidden');
         webcamVideo.srcObject = webcamStream;
         toggleCamBtn.innerText = "Stop Camera Scanner";
         toggleCamBtn.classList.add('stop');
 
         scanInterval = setInterval(captureAndSendFrame, 350);
       } else {
-        console.error("All camera fallback options failed:", lastErr);
-        camAlert.innerText = "Camera access error: Please click the camera/lock icon in your browser URL bar to grant camera permission.";
+        console.warn("HTML5 camera stream failed, activating Server-Side Video Feed fallback:", lastErr);
+        useServerVideoStream(lastErr);
+      }
+    }
+
+    function useServerVideoStream(err) {
+      if (serverWebcamImg) {
+        const camIdx = cameraSelect.selectedIndex >= 0 ? cameraSelect.selectedIndex : 0;
+        serverWebcamImg.src = "/video_feed?cam_index=" + camIdx + "&t=" + Date.now();
+        serverWebcamImg.classList.remove('hidden');
+        webcamVideo.classList.add('hidden');
+        toggleCamBtn.innerText = "Stop Camera Scanner";
+        toggleCamBtn.classList.add('stop');
+        isServerStreaming = true;
+      }
+
+      if (err && (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')) {
+        camAlert.innerText = "⚠️ Browser permission denied. Please click the Camera icon in your address bar to Allow Camera.";
+        camAlert.classList.remove('hidden');
+      } else if (err && (err.name === 'NotReadableError' || err.name === 'TrackStartError')) {
+        camAlert.innerText = "⚠️ Camera is locked by another app. Switching to Server Stream fallback.";
         camAlert.classList.remove('hidden');
       }
     }
@@ -558,6 +586,12 @@
         webcamStream = null;
       }
       webcamVideo.srcObject = null;
+      if (serverWebcamImg) {
+        serverWebcamImg.src = "";
+        serverWebcamImg.classList.add('hidden');
+      }
+      webcamVideo.classList.remove('hidden');
+      isServerStreaming = false;
       toggleCamBtn.innerText = "Start Camera Scanner";
       toggleCamBtn.classList.remove('stop');
     }
