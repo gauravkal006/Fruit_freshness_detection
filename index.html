@@ -247,6 +247,126 @@
       }
     });
 
+    // RGB to HSV Helper
+    function rgbToHsv(r, g, b) {
+      r /= 255; g /= 255; b /= 255;
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      let h, s, v = max;
+      const d = max - min;
+      s = max === 0 ? 0 : d / max;
+      if (max === min) {
+        h = 0;
+      } else {
+        switch (max) {
+          case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+          case g: h = (b - r) / d + 2; break;
+          case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+      }
+      return { h: h * 360, s: s * 100, v: v * 100 };
+    }
+
+    // Advanced Client-Side Produce & Rot Analysis Engine (GitHub Pages Static Mode)
+    function analyzeProduceCanvas(ctx, width, height) {
+      const imgData = ctx.getImageData(0, 0, width, height);
+      const data = imgData.data;
+
+      let totalFruitPixels = 0;
+      let yellowPixels = 0, orangePixels = 0, redPixels = 0, greenPixels = 0, darkRotPixels = 0;
+      let sumX = 0, sumY = 0;
+      let minX = width, minY = height, maxX = 0, maxY = 0;
+
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+
+        // Skip background
+        if (r > 240 && g > 240 && b > 240) continue;
+        if (r < 18 && g < 18 && b < 18) continue;
+
+        const hsv = rgbToHsv(r, g, b);
+        if (hsv.s < 10 && hsv.v > 85) continue;
+
+        totalFruitPixels++;
+        const pixelIdx = i / 4;
+        const x = pixelIdx % width;
+        const y = Math.floor(pixelIdx / width);
+
+        sumX += x;
+        sumY += y;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+
+        const hue = hsv.h;
+        const sat = hsv.s;
+        const val = hsv.v;
+
+        if (hue >= 38 && hue <= 68 && sat > 15) yellowPixels++;
+        else if (hue >= 14 && hue < 38 && sat > 25) orangePixels++;
+        else if ((hue < 14 || hue > 340) && sat > 18) redPixels++;
+        else if (hue >= 68 && hue <= 150 && sat > 15) greenPixels++;
+
+        const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+        if (luminance < 72 && val < 45) {
+          darkRotPixels++;
+        }
+      }
+
+      let fruitType = "Banana";
+      let maxScore = yellowPixels;
+      const cropW = Math.max(10, maxX - minX);
+      const cropH = Math.max(10, maxY - minY);
+      const aspectRatio = cropW / cropH;
+
+      if (redPixels > maxScore) {
+        fruitType = "Apple";
+        maxScore = redPixels;
+      }
+      if (orangePixels > maxScore) {
+        fruitType = "Orange";
+        maxScore = orangePixels;
+      }
+      if (greenPixels > maxScore && greenPixels > yellowPixels * 0.8) {
+        fruitType = (aspectRatio > 1.25 || aspectRatio < 0.8) ? "Banana" : "Apple";
+      }
+
+      const rotRatio = totalFruitPixels > 0 ? (darkRotPixels / totalFruitPixels) : 0;
+      let spoilagePct = Math.min(99.0, Math.max(3.2, rotRatio * 380));
+      spoilagePct = Math.round(spoilagePct * 10) / 10;
+      const freshnessPct = Math.round((100 - spoilagePct) * 10) / 10;
+      const isRotten = spoilagePct > 45.0;
+
+      const bx1 = totalFruitPixels > 40 ? minX : Math.round(width * 0.08);
+      const by1 = totalFruitPixels > 40 ? minY : Math.round(height * 0.08);
+      const bx2 = totalFruitPixels > 40 ? maxX : Math.round(width * 0.92);
+      const by2 = totalFruitPixels > 40 ? maxY : Math.round(height * 0.92);
+
+      const rotSpots = [];
+      if (isRotten && darkRotPixels > 10) {
+        const cx = Math.round(sumX / Math.max(1, totalFruitPixels));
+        const cy = Math.round(sumY / Math.max(1, totalFruitPixels));
+        rotSpots.push({
+          spot_id: 1,
+          location: cy < (by1 + by2) / 2 ? "Upper Region" : "Lower Region",
+          x: cx,
+          y: cy
+        });
+      }
+
+      return {
+        fruitType,
+        freshnessPct,
+        spoilagePct,
+        isRotten,
+        bbox: [bx1, by1, bx2, by2],
+        rotSpots
+      };
+    }
+
     // Client-side Image Processing Fallback for GitHub Pages
     function processImageClientSide(file) {
       return new Promise((resolve) => {
@@ -260,77 +380,21 @@
             const ctx = canvas.getContext('2d');
             ctx.drawImage(img, 0, 0);
 
-            const imgData = ctx.getImageData(0, 0, img.width, img.height);
-            const data = imgData.data;
-
-            let redCount = 0, yellowCount = 0, orangeCount = 0, darkRotCount = 0, totalFruitPixels = 0;
-            let sumX = 0, sumY = 0;
-
-            for (let i = 0; i < data.length; i += 4) {
-              const r = data[i];
-              const g = data[i+1];
-              const b = data[i+2];
-
-              // Skip white/light background
-              if (r > 230 && g > 230 && b > 230) continue;
-              if (r < 30 && g < 30 && b < 30) continue;
-
-              totalFruitPixels++;
-              const pixelIdx = i / 4;
-              const x = pixelIdx % img.width;
-              const y = Math.floor(pixelIdx / img.width);
-              sumX += x;
-              sumY += y;
-
-              // Color metrics
-              if (r > g + 30 && r > b + 30) redCount++;
-              else if (r > 150 && g > 150 && b < 100) yellowCount++;
-              else if (r > 160 && g > 90 && b < 70) orangeCount++;
-
-              // Dark rot spot indicator
-              if (r < 80 && g < 70 && b < 65) darkRotCount++;
-            }
-
-            let fruitType = "Banana";
-            if (redCount > yellowCount && redCount > orangeCount) fruitType = "Apple";
-            else if (orangeCount > yellowCount) fruitType = "Orange";
-
-            const rotRatio = totalFruitPixels > 0 ? (darkRotCount / totalFruitPixels) : 0;
-            let spoilagePct = Math.min(98.5, Math.max(2.1, rotRatio * 450));
-            spoilagePct = Math.round(spoilagePct * 10) / 10;
-            const freshnessPct = Math.round((100 - spoilagePct) * 10) / 10;
-            const isRotten = spoilagePct > 45;
-
-            // Draw bounding box overlay
-            const cx = totalFruitPixels > 0 ? Math.round(sumX / totalFruitPixels) : Math.round(img.width / 2);
-            const cy = totalFruitPixels > 0 ? Math.round(sumY / totalFruitPixels) : Math.round(img.height / 2);
-            const bx1 = Math.max(10, cx - Math.round(img.width * 0.35));
-            const by1 = Math.max(10, cy - Math.round(img.height * 0.35));
-            const bx2 = Math.min(img.width - 10, cx + Math.round(img.width * 0.35));
-            const by2 = Math.min(img.height - 10, cy + Math.round(img.height * 0.35));
+            const analysis = analyzeProduceCanvas(ctx, img.width, img.height);
+            const { fruitType, freshnessPct, spoilagePct, isRotten, bbox, rotSpots } = analysis;
+            const [bx1, by1, bx2, by2] = bbox;
 
             const boxColor = isRotten ? '#dc2626' : '#16a34a';
             ctx.strokeStyle = boxColor;
             ctx.lineWidth = Math.max(3, Math.round(img.width / 150));
             ctx.strokeRect(bx1, by1, bx2 - bx1, by2 - by1);
 
-            // Label banner
             const labelText = `${isRotten ? 'Rotten' : 'Fresh'} ${fruitType} (${freshnessPct}% Fresh)`;
             ctx.fillStyle = boxColor;
             ctx.fillRect(bx1, Math.max(0, by1 - 32), (bx2 - bx1), 32);
             ctx.fillStyle = '#ffffff';
             ctx.font = 'bold 16px Outfit, sans-serif';
             ctx.fillText(labelText, bx1 + 10, Math.max(20, by1 - 10));
-
-            const rotSpots = [];
-            if (isRotten) {
-              rotSpots.push({
-                spot_id: 1,
-                location: cy < img.height / 2 ? "Upper Region" : "Lower Region",
-                x: cx,
-                y: cy
-              });
-            }
 
             const annotatedDataUrl = canvas.toDataURL('image/jpeg', 0.9);
             const base64Data = annotatedDataUrl.split(',')[1];
@@ -363,161 +427,9 @@
       });
     }
 
-    // Multi-Camera Enumeration Logic
-    async function populateCameraDevices() {
-      camAlert.classList.add('hidden');
-      try {
-        const initialStream = await navigator.mediaDevices.getUserMedia({ video: true });
-        initialStream.getTracks().forEach(track => track.stop());
-
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter(d => d.kind === 'videoinput');
-
-        cameraSelect.innerHTML = '';
-        if (videoDevices.length === 0) {
-          cameraSelect.innerHTML = '<option value="">No camera devices detected</option>';
-          return;
-        }
-
-        videoDevices.forEach((device, index) => {
-          const option = document.createElement('option');
-          option.value = device.deviceId;
-          option.text = device.label || `Camera ${index + 1} (${index === 0 ? 'Internal Laptop Cam' : 'External USB Cam'})`;
-          cameraSelect.appendChild(option);
-        });
-      } catch (err) {
-        console.warn("Camera enum error:", err);
-        cameraSelect.innerHTML = '<option value="default">Default System Camera</option>';
-        camAlert.innerText = "Camera permission needed. Please click the Camera icon in your browser address bar to allow access.";
-        camAlert.classList.remove('hidden');
-      }
-    }
-
-    cameraSelect.addEventListener('change', () => {
-      if (webcamStream) {
-        stopWebcam();
-        startWebcam();
-      }
-    });
-
-    // Real-Time HTML5 Webcam Scanner Logic
-    const webcamVideo = document.getElementById('webcamVideo');
-    const captureCanvas = document.getElementById('captureCanvas');
-    const toggleCamBtn = document.getElementById('toggleCamBtn');
-    let webcamStream = null;
-    let scanInterval = null;
-    let isProcessingFrame = false;
-
-    toggleCamBtn.addEventListener('click', () => {
-      if (webcamStream) {
-        stopWebcam();
-      } else {
-        startWebcam();
-      }
-    });
-
-    async function startWebcam() {
-      camAlert.classList.add('hidden');
-      const selectedDeviceId = cameraSelect.value;
-      const constraints = {
-        video: selectedDeviceId && selectedDeviceId !== 'default'
-          ? { deviceId: { exact: selectedDeviceId }, width: 640, height: 480 }
-          : { width: 640, height: 480, facingMode: 'environment' }
-      };
-
-      try {
-        webcamStream = await navigator.mediaDevices.getUserMedia(constraints);
-        webcamVideo.srcObject = webcamStream;
-        toggleCamBtn.innerText = "Stop Camera Scanner";
-        toggleCamBtn.classList.add('stop');
-
-        scanInterval = setInterval(captureAndSendFrame, 350);
-      } catch (err) {
-        console.error("Camera access failed:", err);
-        camAlert.innerText = "Failed to access camera. Please check camera permissions.";
-        camAlert.classList.remove('hidden');
-      }
-    }
-
-    function stopWebcam() {
-      if (scanInterval) {
-        clearInterval(scanInterval);
-        scanInterval = null;
-      }
-      if (webcamStream) {
-        webcamStream.getTracks().forEach(track => track.stop());
-        webcamStream = null;
-      }
-      webcamVideo.srcObject = null;
-      toggleCamBtn.innerText = "Start Camera Scanner";
-      toggleCamBtn.classList.remove('stop');
-    }
-
-    async function captureAndSendFrame() {
-      if (!webcamStream || isProcessingFrame) return;
-
-      const width = webcamVideo.videoWidth || 640;
-      const height = webcamVideo.videoHeight || 480;
-      if (width === 0 || height === 0) return;
-
-      captureCanvas.width = width;
-      captureCanvas.height = height;
-      const ctx = captureCanvas.getContext('2d');
-      ctx.drawImage(webcamVideo, 0, 0, width, height);
-
-      isProcessingFrame = true;
-
-      captureCanvas.toBlob(async (blob) => {
-        if (!blob) {
-          isProcessingFrame = false;
-          return;
-        }
-
-        const formData = new FormData();
-        formData.append("file", blob, "live_frame.jpg");
-
-        try {
-          const res = await fetch('/predict', {
-            method: 'POST',
-            body: formData
-          });
-
-          if (res.ok) {
-            const data = await res.json();
-            renderDetectionResults(data);
-          } else {
-            processFrameClientSide(ctx, width, height);
-          }
-        } catch (e) {
-          processFrameClientSide(ctx, width, height);
-        } finally {
-          isProcessingFrame = false;
-        }
-      }, 'image/jpeg', 0.85);
-    }
-
     function processFrameClientSide(ctx, width, height) {
-      const imgData = ctx.getImageData(0, 0, width, height);
-      const data = imgData.data;
-
-      let rSum = 0, gSum = 0, bSum = 0, count = 0;
-      for (let i = 0; i < data.length; i += 16) {
-        rSum += data[i];
-        gSum += data[i+1];
-        bSum += data[i+2];
-        count++;
-      }
-
-      const avgR = rSum / count;
-      const avgG = gSum / count;
-      const avgB = bSum / count;
-
-      let fruitType = "Banana";
-      if (avgR > avgG + 20 && avgR > avgB + 20) fruitType = "Apple";
-      else if (avgR > 140 && avgG > 100 && avgB < 90) fruitType = "Orange";
-
-      const freshnessPct = 94.2;
-      const spoilagePct = 5.8;
+      const analysis = analyzeProduceCanvas(ctx, width, height);
+      const { fruitType, freshnessPct, spoilagePct, isRotten, rotSpots } = analysis;
 
       renderDetectionResults({
         success: true,
@@ -525,12 +437,14 @@
         type_confidence: 95.8,
         freshness_pct: freshnessPct,
         spoilage_pct: spoilagePct,
-        display_label: `Fresh ${fruitType}`,
+        display_label: `${isRotten ? 'Rotten' : 'Fresh'} ${fruitType}`,
         confidence: 95.8,
-        status: `${fruitType} - Fresh`,
-        status_color: 'fresh',
-        advice: `Safe for consumption. This ${fruitType} is ${freshnessPct}% fresh.`,
-        rot_spots: [],
+        status: `${fruitType} - ${isRotten ? 'Rotten / Spoiled' : 'Fresh'}`,
+        status_color: isRotten ? 'rotten' : 'fresh',
+        advice: isRotten
+          ? `Unsafe for consumption. This ${fruitType} is ${spoilagePct}% decayed/spoiled.`
+          : `Safe for consumption. This ${fruitType} is ${freshnessPct}% fresh.`,
+        rot_spots: rotSpots,
         image_b64: captureCanvas.toDataURL('image/jpeg', 0.8).split(',')[1],
         all_probabilities: [
           { class: `Fresh ${fruitType}`, confidence: freshnessPct },
