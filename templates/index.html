@@ -449,14 +449,6 @@
     async function populateCameraDevices() {
       camAlert.classList.add('hidden');
       try {
-        let initialStream = null;
-        try {
-          initialStream = await navigator.mediaDevices.getUserMedia({ video: true });
-          initialStream.getTracks().forEach(track => track.stop());
-        } catch (e) {
-          console.warn("Initial camera permission check warning:", e);
-        }
-
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(d => d.kind === 'videoinput');
 
@@ -469,9 +461,8 @@
         videoDevices.forEach((device, index) => {
           const option = document.createElement('option');
           option.value = device.deviceId;
-          const isInternal = device.label.toLowerCase().includes('front') || device.label.toLowerCase().includes('integrated') || index === 0;
-          const labelType = isInternal ? 'Internal / Laptop Cam' : 'External / USB Cam';
-          option.text = device.label || `Camera ${index + 1} (${labelType})`;
+          const label = device.label || `Camera ${index + 1}`;
+          option.text = label;
           cameraSelect.appendChild(option);
         });
       } catch (err) {
@@ -503,48 +494,37 @@
       }
     });
 
-    // Cascading Multi-Camera Launcher (Guarantees Internal or External Cam Opens)
+    // Cascading Camera Launcher (Guarantees Camera Opens Cleanly)
     async function startWebcam() {
       camAlert.classList.add('hidden');
       const selectedDeviceId = cameraSelect.value;
 
-      // Multi-level fallback sequence
-      const constraintOptions = [];
-
-      if (selectedDeviceId && selectedDeviceId !== 'default') {
-        constraintOptions.push({ video: { deviceId: { ideal: selectedDeviceId } } });
-        constraintOptions.push({ video: { deviceId: { exact: selectedDeviceId } } });
-      }
-      constraintOptions.push({ video: { facingMode: 'user' } });
-      constraintOptions.push({ video: { facingMode: 'environment' } });
-      constraintOptions.push({ video: true });
-
-      let stream = null;
-      let lastErr = null;
-
-      for (const constraint of constraintOptions) {
-        try {
-          stream = await navigator.mediaDevices.getUserMedia(constraint);
-          if (stream && stream.getVideoTracks().length > 0) {
-            console.log("📷 Camera successfully opened with constraint:", constraint);
-            break;
-          }
-        } catch (e) {
-          lastErr = e;
-        }
+      let constraints = { video: true };
+      if (selectedDeviceId && selectedDeviceId !== 'default' && selectedDeviceId !== '') {
+        constraints = { video: { deviceId: { exact: selectedDeviceId } } };
       }
 
-      if (stream) {
-        webcamStream = stream;
+      try {
+        webcamStream = await navigator.mediaDevices.getUserMedia(constraints);
         webcamVideo.srcObject = webcamStream;
         toggleCamBtn.innerText = "Stop Camera Scanner";
         toggleCamBtn.classList.add('stop');
 
         scanInterval = setInterval(captureAndSendFrame, 350);
-      } else {
-        console.error("All camera fallback options failed:", lastErr);
-        camAlert.innerText = "Camera access error: Please click the camera/lock icon in your browser URL bar to grant camera permission.";
-        camAlert.classList.remove('hidden');
+      } catch (err) {
+        console.warn("Primary camera constraint failed, retrying with simple video fallback...", err);
+        try {
+          webcamStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          webcamVideo.srcObject = webcamStream;
+          toggleCamBtn.innerText = "Stop Camera Scanner";
+          toggleCamBtn.classList.add('stop');
+
+          scanInterval = setInterval(captureAndSendFrame, 350);
+        } catch (e2) {
+          console.error("Camera access failed:", e2);
+          camAlert.innerText = "Failed to access camera. Please allow camera permissions in your browser.";
+          camAlert.classList.remove('hidden');
+        }
       }
     }
 
