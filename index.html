@@ -582,6 +582,7 @@
     }
 
     function stopWebcam() {
+      smoothedPredictionState = null;
       if (scanInterval) {
         clearInterval(scanInterval);
         scanInterval = null;
@@ -687,8 +688,74 @@
       });
     }
 
-    function renderDetectionResults(data) {
-      if (!data || typeof data !== 'object') return;
+    let smoothedPredictionState = null;
+
+    function smoothDetectionData(data) {
+      if (!data || !data.success || data.freshness_pct === undefined) return data;
+
+      const smoothed = JSON.parse(JSON.stringify(data));
+
+      if (!smoothedPredictionState || smoothedPredictionState.fruit_type !== smoothed.fruit_type) {
+        smoothedPredictionState = {
+          fruit_type: smoothed.fruit_type,
+          freshness_pct: smoothed.freshness_pct,
+          spoilage_pct: smoothed.spoilage_pct,
+          type_confidence: smoothed.type_confidence,
+          probs: {}
+        };
+        if (smoothed.all_probabilities && Array.isArray(smoothed.all_probabilities)) {
+          smoothed.all_probabilities.forEach(p => {
+            smoothedPredictionState.probs[p.class] = p.confidence;
+          });
+        }
+        return smoothed;
+      } 
+
+      const alpha = 0.25;
+
+      const newFresh = smoothed.freshness_pct;
+      const prevFresh = smoothedPredictionState.freshness_pct;
+      const smoothFresh = Math.round((alpha * newFresh + (1 - alpha) * prevFresh) * 10) / 10;
+      const smoothSpoil = Math.round((100.0 - smoothFresh) * 10) / 10;
+
+      smoothedPredictionState.freshness_pct = smoothFresh;
+      smoothedPredictionState.spoilage_pct = smoothSpoil;
+
+      smoothed.freshness_pct = smoothFresh;
+      smoothed.spoilage_pct = smoothSpoil;
+
+      const isRotten = smoothSpoil > smoothFresh;
+      smoothed.is_rotten = isRotten;
+      smoothed.display_label = isRotten ? `Rotten ${smoothed.fruit_type}` : `Fresh ${smoothed.fruit_type}`;
+      smoothed.status = `${smoothed.fruit_type} - ${isRotten ? 'Rotten / Spoiled' : 'Fresh'}`;
+      smoothed.status_color = isRotten ? 'rotten' : 'fresh';
+
+      if (isRotten) {
+        const spotLocs = (smoothed.rot_spots && smoothed.rot_spots.length > 0)
+          ? ` Decay detected at: ${smoothed.rot_spots.map(s => s.location).join(', ')}.`
+          : '';
+        smoothed.advice = `Unsafe for consumption. This ${smoothed.fruit_type} is ${smoothSpoil}% decayed/spoiled.${spotLocs}`;
+      } else {
+        smoothed.advice = `Safe for consumption. This ${smoothed.fruit_type} is ${smoothFresh}% fresh.`;
+      }
+
+      if (smoothed.all_probabilities && Array.isArray(smoothed.all_probabilities)) {
+        smoothed.all_probabilities.forEach(item => {
+          const prevVal = smoothedPredictionState.probs[item.class];
+          if (prevVal !== undefined) {
+            item.confidence = Math.round((alpha * item.confidence + (1 - alpha) * prevVal) * 10) / 10;
+            smoothedPredictionState.probs[item.class] = item.confidence;
+          }
+        });
+      }
+
+      return smoothed;
+    }
+
+    function renderDetectionResults(rawData) {
+      if (!rawData || typeof rawData !== 'object') return;
+
+      const data = smoothDetectionData(rawData);
 
       emptyState.classList.add('hidden');
       outputState.classList.remove('hidden');

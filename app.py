@@ -64,8 +64,8 @@ def get_model():
 
 def detect_and_draw_rot_spots(cv_img, produce_bbox, is_rotten):
     """
-    Locates rot and decay spots on produce items and highlights them with bounding markers and location tags.
-    Determines spatial quadrant (e.g., Upper-Left, Center, Lower-Right) of localized decay spots.
+    Locates rot and decay spots strictly INSIDE the fruit item boundary.
+    Draws highlighted red rot bounding boxes on localized decay spots.
     """
     x1, y1, x2, y2 = produce_bbox
     crop_h = y2 - y1
@@ -75,14 +75,36 @@ def detect_and_draw_rot_spots(cv_img, produce_bbox, is_rotten):
         return cv_img, []
         
     produce_crop = cv_img[y1:y2, x1:x2]
-    lab_crop = cv2.cvtColor(produce_crop, cv2.COLOR_BGR2LAB)
-    l_channel = lab_crop[:, :, 0]
     
-    mean_l = np.mean(l_channel)
-    std_l = np.std(l_channel)
-    rot_thresh_val = max(30, int(mean_l - 1.2 * std_l))
+    # Build a mask for the fruit body inside the crop to ignore background/edges
+    hsv_crop = cv2.cvtColor(produce_crop, cv2.COLOR_BGR2HSV)
+    lab_crop = cv2.cvtColor(produce_crop, cv2.COLOR_BGR2LAB)
+    
+    a_crop = lab_crop[:, :, 1]
+    b_crop = lab_crop[:, :, 2]
+    chroma_crop = cv2.absdiff(a_crop, 128) + cv2.absdiff(b_crop, 128)
+    
+    _, fruit_body_mask = cv2.threshold(chroma_crop, 10, 255, cv2.THRESH_BINARY)
+    
+    # Exclude outer 6% border of crop to prevent edge artifact detections
+    border_mask = np.zeros((crop_h, crop_w), dtype=np.uint8)
+    margin_x = int(crop_w * 0.06)
+    margin_y = int(crop_h * 0.06)
+    border_mask[margin_y:max(margin_y+1, crop_h-margin_y), margin_x:max(margin_x+1, crop_w-margin_x)] = 255
+    fruit_body_mask = cv2.bitwise_and(fruit_body_mask, border_mask)
+    
+    l_channel = lab_crop[:, :, 0]
+    fruit_pixels = l_channel[fruit_body_mask > 0]
+    if len(fruit_pixels) < 40:
+        return cv_img, []
+        
+    mean_l = np.mean(fruit_pixels)
+    std_l = np.std(fruit_pixels)
+    rot_thresh_val = max(25, int(mean_l - 1.25 * std_l))
     
     _, rot_mask = cv2.threshold(l_channel, rot_thresh_val, 255, cv2.THRESH_BINARY_INV)
+    rot_mask = cv2.bitwise_and(rot_mask, fruit_body_mask)
+    
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     rot_mask = cv2.morphologyEx(rot_mask, cv2.MORPH_OPEN, kernel)
     
@@ -94,7 +116,7 @@ def detect_and_draw_rot_spots(cv_img, produce_bbox, is_rotten):
         
         for idx, c in enumerate(contours[:3]):
             spot_area = cv2.contourArea(c)
-            if spot_area > (crop_h * crop_w * 0.008):
+            if spot_area > (crop_h * crop_w * 0.006):
                 sx, sy, sw, sh = cv2.boundingRect(c)
                 
                 gx1 = x1 + sx
@@ -126,7 +148,7 @@ def detect_and_draw_rot_spots(cv_img, produce_bbox, is_rotten):
                 }
                 rot_spots.append(spot_info)
                 
-                # Draw rot spot bounding rectangle
+                # Draw rot spot bounding box strictly on fruit
                 cv2.rectangle(cv_img, (gx1, gy1), (gx2, gy2), (0, 0, 255), 2)
                 cv2.circle(cv_img, (cx, cy), 4, (0, 0, 255), -1)
                 
@@ -167,26 +189,37 @@ def draw_yolo_bounding_box_fixed(cv_img, bbox, display_label, top1_conf, is_rott
     return cv_img
 
 def extract_produce_region(pil_img):
-    """Isolates fruit from background clutter using HSV color chroma thresholding."""
+    """
+    Isolates fruit from background clutter using HSV + Lab chromaticity color space thresholding.
+    Returns cropped image, bounding box coordinates (x1, y1, x2, y2), and status boolean.
+    """
     cv_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
     h, w, _ = cv_img.shape
     
     hsv = cv2.cvtColor(cv_img, cv2.COLOR_BGR2HSV)
+    lab = cv2.cvtColor(cv_img, cv2.COLOR_BGR2LAB)
+    
     sat = hsv[:, :, 1]
-    val = hsv[:, :, 2]
+    a_channel = lab[:, :, 1]
+    b_channel = lab[:, :, 2]
+    
+    chroma = cv2.absdiff(a_channel, 128) + cv2.absdiff(b_channel, 128)
     
     _, sat_mask = cv2.threshold(sat, 25, 255, cv2.THRESH_BINARY)
-    _, val_mask = cv2.threshold(val, 20, 245, cv2.THRESH_BINARY)
-    produce_mask = cv2.bitwise_and(sat_mask, val_mask)
+    _, chroma_mask = cv2.threshold(chroma, 14, 255, cv2.THRESH_BINARY)
+    
+    produce_mask = cv2.bitwise_or(sat_mask, chroma_mask)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    produce_mask = cv2.morphologyEx(produce_mask, cv2.MORPH_CLOSE, kernel)
     
     contours, _ = cv2.findContours(produce_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     if contours:
         c = max(contours, key=cv2.contourArea)
         area = cv2.contourArea(c)
-        if area > (h * w * 0.02):
+        if area > (h * w * 0.015):
             x, y, bw, bh = cv2.boundingRect(c)
-            pad = 12
+            pad = 10
             x1 = max(0, x - pad)
             y1 = max(0, y - pad)
             x2 = min(w, x + bw + pad)
