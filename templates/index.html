@@ -449,29 +449,34 @@
     async function populateCameraDevices() {
       camAlert.classList.add('hidden');
       try {
-        const initialStream = await navigator.mediaDevices.getUserMedia({ video: true });
-        initialStream.getTracks().forEach(track => track.stop());
+        let initialStream = null;
+        try {
+          initialStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          initialStream.getTracks().forEach(track => track.stop());
+        } catch (e) {
+          console.warn("Initial camera permission check warning:", e);
+        }
 
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(d => d.kind === 'videoinput');
 
         cameraSelect.innerHTML = '';
         if (videoDevices.length === 0) {
-          cameraSelect.innerHTML = '<option value="">No camera devices detected</option>';
+          cameraSelect.innerHTML = '<option value="default">Default System Camera</option>';
           return;
         }
 
         videoDevices.forEach((device, index) => {
           const option = document.createElement('option');
           option.value = device.deviceId;
-          option.text = device.label || `Camera ${index + 1} (${index === 0 ? 'Internal Cam' : 'External Cam'})`;
+          const isInternal = device.label.toLowerCase().includes('front') || device.label.toLowerCase().includes('integrated') || index === 0;
+          const labelType = isInternal ? 'Internal / Laptop Cam' : 'External / USB Cam';
+          option.text = device.label || `Camera ${index + 1} (${labelType})`;
           cameraSelect.appendChild(option);
         });
       } catch (err) {
         console.warn("Camera enum error:", err);
         cameraSelect.innerHTML = '<option value="default">Default System Camera</option>';
-        camAlert.innerText = "Camera permission needed. Please allow camera access in browser.";
-        camAlert.classList.remove('hidden');
       }
     }
 
@@ -498,25 +503,47 @@
       }
     });
 
+    // Cascading Multi-Camera Launcher (Guarantees Internal or External Cam Opens)
     async function startWebcam() {
       camAlert.classList.add('hidden');
       const selectedDeviceId = cameraSelect.value;
-      const constraints = {
-        video: selectedDeviceId && selectedDeviceId !== 'default'
-          ? { deviceId: { exact: selectedDeviceId }, width: 640, height: 480 }
-          : { width: 640, height: 480, facingMode: 'environment' }
-      };
 
-      try {
-        webcamStream = await navigator.mediaDevices.getUserMedia(constraints);
+      // Multi-level fallback sequence
+      const constraintOptions = [];
+
+      if (selectedDeviceId && selectedDeviceId !== 'default') {
+        constraintOptions.push({ video: { deviceId: { ideal: selectedDeviceId } } });
+        constraintOptions.push({ video: { deviceId: { exact: selectedDeviceId } } });
+      }
+      constraintOptions.push({ video: { facingMode: 'user' } });
+      constraintOptions.push({ video: { facingMode: 'environment' } });
+      constraintOptions.push({ video: true });
+
+      let stream = null;
+      let lastErr = null;
+
+      for (const constraint of constraintOptions) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(constraint);
+          if (stream && stream.getVideoTracks().length > 0) {
+            console.log("📷 Camera successfully opened with constraint:", constraint);
+            break;
+          }
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+
+      if (stream) {
+        webcamStream = stream;
         webcamVideo.srcObject = webcamStream;
         toggleCamBtn.innerText = "Stop Camera Scanner";
         toggleCamBtn.classList.add('stop');
 
         scanInterval = setInterval(captureAndSendFrame, 350);
-      } catch (err) {
-        console.error("Camera access failed:", err);
-        camAlert.innerText = "Failed to access camera. Please check permissions.";
+      } else {
+        console.error("All camera fallback options failed:", lastErr);
+        camAlert.innerText = "Camera access error: Please click the camera/lock icon in your browser URL bar to grant camera permission.";
         camAlert.classList.remove('hidden');
       }
     }
