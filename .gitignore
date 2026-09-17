@@ -1,0 +1,19 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.cache
+
+# Environment & IDE
+.env
+.venv
+venv/
+ENV/
+.vscode/
+.idea/
+
+# Ultralytics & Model cache
+runs/
+*.log
+dataset1/*.cache
+dataset2/*.cache
