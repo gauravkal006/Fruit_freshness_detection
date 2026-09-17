@@ -381,29 +381,32 @@ def generate_webcam_frames(cam_index=0):
     
     yolo_model = get_model()
     
-    while True:
-        success, frame = camera.read()
-        if not success:
-            break
+    try:
+        while True:
+            success, frame = camera.read()
+            if not success:
+                break
+                
+            pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            cropped_pil, (x1, y1, x2, y2), _ = extract_produce_region(pil_frame)
+            top1_idx, top1_conf, _ = predict_with_multi_angle_tta(yolo_model, cropped_pil)
             
-        pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        cropped_pil, (x1, y1, x2, y2), _ = extract_produce_region(pil_frame)
-        top1_idx, top1_conf, _ = predict_with_multi_angle_tta(yolo_model, cropped_pil)
-        
-        raw_class_name = yolo_model.names[top1_idx]
-        display_label = CLASS_DISPLAY_MAP.get(raw_class_name.lower(), raw_class_name)
-        is_rotten = "rotten" in raw_class_name.lower()
-        
-        annotated_frame = draw_yolo_bounding_box_fixed(frame, (x1, y1, x2, y2), display_label, top1_conf, is_rotten)
-        annotated_frame, _ = detect_and_draw_rot_spots(annotated_frame, (x1, y1, x2, y2), is_rotten)
-        
-        ret, buffer = cv2.imencode('.jpg', annotated_frame)
-        frame_bytes = buffer.tobytes()
-        
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-               
-    camera.release()
+            raw_class_name = yolo_model.names[top1_idx]
+            display_label = CLASS_DISPLAY_MAP.get(raw_class_name.lower(), raw_class_name)
+            is_rotten = "rotten" in raw_class_name.lower()
+            
+            annotated_frame = draw_yolo_bounding_box_fixed(frame, (x1, y1, x2, y2), display_label, top1_conf, is_rotten)
+            annotated_frame, _ = detect_and_draw_rot_spots(annotated_frame, (x1, y1, x2, y2), is_rotten)
+            
+            ret, buffer = cv2.imencode('.jpg', annotated_frame)
+            frame_bytes = buffer.tobytes()
+            
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+    finally:
+        if camera and camera.isOpened():
+            camera.release()
+            print(f"📷 Released OpenCV VideoCapture for camera index {cam_index}")
 
 @app.route("/video_feed")
 def video_feed():

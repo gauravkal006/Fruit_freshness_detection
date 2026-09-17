@@ -58,6 +58,7 @@
 
           <div class="webcam-container">
             <video id="webcamVideo" class="webcam-video" autoplay playsinline muted></video>
+            <img id="serverWebcamImg" class="webcam-video hidden" alt="Server Camera Stream">
             <canvas id="captureCanvas" class="hidden"></canvas>
           </div>
           
@@ -448,8 +449,15 @@
     // Multi-Camera Device Enumeration
     async function populateCameraDevices() {
       camAlert.classList.add('hidden');
+      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+        cameraSelect.innerHTML = '<option value="default">Default System Camera</option>';
+        return;
+      }
       try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
+        const enumPromise = navigator.mediaDevices.enumerateDevices();
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Enum timeout")), 1500));
+        
+        const devices = await Promise.race([enumPromise, timeoutPromise]);
         const videoDevices = devices.filter(d => d.kind === 'videoinput');
 
         cameraSelect.innerHTML = '';
@@ -466,65 +474,110 @@
           cameraSelect.appendChild(option);
         });
       } catch (err) {
-        console.warn("Camera enum error:", err);
+        console.log("Camera enumeration notice:", err.message || err);
         cameraSelect.innerHTML = '<option value="default">Default System Camera</option>';
       }
     }
 
     cameraSelect.addEventListener('change', () => {
-      if (webcamStream) {
+      if (webcamStream || isServerStreaming) {
         stopWebcam();
         startWebcam();
       }
     });
 
-    // Real-Time HTML5 Webcam Scanner Logic
+    // Real-Time HTML5 & Flask Hybrid Webcam Scanner Logic
     const webcamVideo = document.getElementById('webcamVideo');
+    const serverWebcamImg = document.getElementById('serverWebcamImg');
     const captureCanvas = document.getElementById('captureCanvas');
     const toggleCamBtn = document.getElementById('toggleCamBtn');
     let webcamStream = null;
     let scanInterval = null;
     let isProcessingFrame = false;
+    let isServerStreaming = false;
 
     toggleCamBtn.addEventListener('click', () => {
-      if (webcamStream) {
+      if (webcamStream || isServerStreaming) {
         stopWebcam();
       } else {
         startWebcam();
       }
     });
 
-    // Cascading Camera Launcher (Guarantees Camera Opens Cleanly)
+    // Cascading Hybrid Camera Launcher (HTML5 WASM -> Flask MJPEG Stream Fallback)
     async function startWebcam() {
       camAlert.classList.add('hidden');
       const selectedDeviceId = cameraSelect.value;
 
-      let constraints = { video: true };
+      // Check if navigator.mediaDevices exists
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        useServerVideoStream();
+        return;
+      }
+
+      // Single, clean primary constraint setup to prevent Chromium driver timeout flooding
+      let constraints = { video: { width: { ideal: 1280 }, height: { ideal: 720 } } };
       if (selectedDeviceId && selectedDeviceId !== 'default' && selectedDeviceId !== '') {
         constraints = { video: { deviceId: { exact: selectedDeviceId } } };
       }
 
+      let stream = null;
+      let lastErr = null;
+
       try {
-        webcamStream = await navigator.mediaDevices.getUserMedia(constraints);
+        const getUserMediaPromise = navigator.mediaDevices.getUserMedia(constraints);
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error("Camera hardware timeout")), 2500)
+        );
+        stream = await Promise.race([getUserMediaPromise, timeoutPromise]);
+      } catch (e1) {
+        lastErr = e1;
+        try {
+          const simplePromise = navigator.mediaDevices.getUserMedia({ video: true });
+          const timeoutPromise2 = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("Simple camera fallback timeout")), 2000)
+          );
+          stream = await Promise.race([simplePromise, timeoutPromise2]);
+        } catch (e2) {
+          lastErr = e2;
+        }
+      }
+
+      if (stream && stream.getVideoTracks().length > 0) {
+        webcamStream = stream;
+        webcamVideo.classList.remove('hidden');
+        if (serverWebcamImg) serverWebcamImg.classList.add('hidden');
         webcamVideo.srcObject = webcamStream;
         toggleCamBtn.innerText = "Stop Camera Scanner";
         toggleCamBtn.classList.add('stop');
 
         scanInterval = setInterval(captureAndSendFrame, 350);
-      } catch (err) {
-        console.warn("Primary camera constraint failed, retrying with simple video fallback...", err);
-        try {
-          webcamStream = await navigator.mediaDevices.getUserMedia({ video: true });
-          webcamVideo.srcObject = webcamStream;
-          toggleCamBtn.innerText = "Stop Camera Scanner";
-          toggleCamBtn.classList.add('stop');
+      } else {
+        console.log("HTML5 camera stream unavailable or hardware locked, activating Server MJPEG / video_feed fallback:", lastErr ? (lastErr.message || lastErr) : "Timeout");
+        useServerVideoStream(lastErr);
+      }
+    }
 
-          scanInterval = setInterval(captureAndSendFrame, 350);
-        } catch (e2) {
-          console.error("Camera access failed:", e2);
-          camAlert.innerText = "Failed to access camera. Please allow camera permissions in your browser.";
-          camAlert.classList.remove('hidden');
-        }
+    function useServerVideoStream(err) {
+      if (serverWebcamImg) {
+        const camIdx = cameraSelect.selectedIndex >= 0 ? cameraSelect.selectedIndex : 0;
+        serverWebcamImg.src = "/video_feed?cam_index=" + camIdx + "&t=" + Date.now();
+        serverWebcamImg.classList.remove('hidden');
+        webcamVideo.classList.add('hidden');
+        toggleCamBtn.innerText = "Stop Camera Scanner";
+        toggleCamBtn.classList.add('stop');
+        isServerStreaming = true;
+      }
+
+      if (err && (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')) {
+        camAlert.innerText = "⚠️ Browser camera permission required. Click the camera icon in your address bar to allow camera access.";
+        camAlert.classList.remove('hidden');
+      } else if (location.protocol === 'file:' || (location.hostname !== 'localhost' && location.hostname !== '127.0.0.1' && !serverWebcamImg)) {
+        camAlert.innerText = "⚠️ Camera access timed out or is in use. Please allow camera permissions and ensure no other app is using the webcam.";
+        camAlert.classList.remove('hidden');
+      } else {
+        camAlert.innerText = "⚡ Connected via Server Video Feed (/video_feed). Real-time produce scanner active.";
+        camAlert.classList.remove('hidden');
       }
     }
 
@@ -538,6 +591,12 @@
         webcamStream = null;
       }
       webcamVideo.srcObject = null;
+      if (serverWebcamImg) {
+        serverWebcamImg.src = "";
+        serverWebcamImg.classList.add('hidden');
+      }
+      webcamVideo.classList.remove('hidden');
+      isServerStreaming = false;
       toggleCamBtn.innerText = "Start Camera Scanner";
       toggleCamBtn.classList.remove('stop');
     }
