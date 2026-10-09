@@ -10,6 +10,8 @@
 
 ---
 
+> 🚀 **Fastest way to run:** install [Docker Desktop](https://www.docker.com/products/docker-desktop/), then `git clone` this repo and run `docker compose up -d --build`. Open http://localhost:5000. [Full Docker guide ↓](#-quick-start-with-docker-recommended--works-on-any-laptop)
+
 ## 🌟 Overview & Project Summary
 
 **Banana, Apple and Orange Freshness Prediction** is an automated quality assurance and spoilage detection system designed for retail groceries, supply chains, smart refrigeration systems, edge devices, and consumer produce inspection.
@@ -120,24 +122,86 @@ graph TD
 
 ---
 
-## 💻 Where Should This Project Run?
+## 🐳 Quick Start with Docker (Recommended — works on any laptop)
 
-This project is versatile and can run in **three different execution environments**:
+Docker packages the app, Python, PyTorch, OpenCV and the trained model into one container, so you **don't need to install Python or any libraries**. It works the same on Windows, macOS and Linux.
 
-1. **Virtual Environment (`venv` / `conda`) — RECOMMENDED**:
-   - Isolates dependencies from your global Python installation.
-   - Ideal for local development, testing, and debugging.
-2. **Direct Local Environment (Global Python)**:
-   - Run directly on your machine if Python 3.8+ and `pip` are installed globally.
+### What you need
+
+| Requirement | Download |
+| :--- | :--- |
+| **Git** | https://git-scm.com/downloads |
+| **Docker Desktop** (Windows / macOS) or **Docker Engine** (Linux) | https://www.docker.com/products/docker-desktop/ |
+
+> 💡 After installing Docker Desktop, **open it once and wait until it says "Engine running"** before running the commands below.
+
+### 3 steps to run
+
+**1. Clone the project**
+
+```bash
+git clone https://github.com/gauravkal006/Fruit_freshness_detection.git
+cd Fruit_freshness_detection
+```
+
+**2. Build and start the container**
+
+```bash
+docker compose up -d --build
+```
+
+The first build downloads PyTorch and other libraries (~1–2 GB) and can take **5–15 minutes**. Later starts take only a few seconds.
+
+**3. Open the app in your browser**
+
+👉 **http://localhost:5000**
+
+That's it! Upload a photo of an apple, banana or orange, or use the **Live Camera** tab.
+
+### Everyday Docker commands
+
+| What you want to do | Command |
+| :--- | :--- |
+| Start the app | `docker compose up -d` |
+| Stop the app | `docker compose down` |
+| See logs (errors, model loading) | `docker compose logs -f` |
+| Check it is running / healthy | `docker compose ps` |
+| Rebuild after changing code | `docker compose up -d --build` |
+| Remove everything (image too) | `docker compose down --rmi all` |
+
+### Without Docker Compose (plain Docker)
+
+```bash
+docker build -t fruit-freshness-detection .
+docker run -d -p 5000:5000 --name fruit-freshness fruit-freshness-detection
+```
+
+### 🛠️ Troubleshooting
+
+| Problem | Fix |
+| :--- | :--- |
+| `Cannot connect to the Docker daemon` / `error during connect` | Docker Desktop is not running. Open it and wait for "Engine running". |
+| `port is already allocated` / port 5000 in use | Another program uses port 5000 (on macOS often AirPlay Receiver). Change `"5000:5000"` to `"8080:5000"` in `docker-compose.yml`, then open http://localhost:8080 |
+| Camera does not start | Open the app at **`http://localhost:5000`** (not your IP address) — browsers only allow camera access on `localhost` or HTTPS. Allow camera permission when asked. |
+| Build is very slow / fails while downloading | Check your internet connection and run `docker compose up -d --build` again — finished steps are cached. |
+
+> ℹ️ **About the camera in Docker:** the Live Camera tab uses your **browser's** camera and sends frames to the server, so it works with Docker. The older server-side fallback (`/video_feed`, which opens a USB camera directly from Python) does **not** work inside Docker, because containers on Windows/macOS cannot access the laptop's webcam. If you need that, run the app without Docker (see below).
+
+---
+
+## 💻 Other Ways to Run This Project
+
+1. **Docker — RECOMMENDED** (see above): no Python setup needed.
+2. **Python Virtual Environment (`venv` / `conda`)**: for development and debugging (see below).
 3. **GitHub Pages (Browser-Native / Static)**:
    - Hosted statically on `https://gauravkal006.github.io/Fruit_freshness_detection/`.
    - Requires **zero installation** or Python server setup for end users.
 
 ---
 
-## 🚀 Step-by-Step Setup & Execution Guide
+## 🚀 Running Without Docker (Python Setup)
 
-Follow these step-by-step instructions to run the project locally.
+Use this if you want to edit the code or use the server-side USB camera. Requires **Python 3.9 – 3.13**.
 
 ### Step 1: Clone the Repository
 
@@ -255,7 +319,8 @@ To deploy or update the static web application on GitHub Pages:
 ```
 .
 ├── models/
-│   └── best.pt               # Fine-tuned 15-Epoch YOLOv11 model weights (12.5 MB)
+│   ├── best.pt               # Fine-tuned 15-Epoch YOLOv11 model weights (12.5 MB)
+│   └── best.onnx             # ONNX export used by the browser / GitHub Pages mode
 ├── static/
 │   └── style.css             # Glassmorphism UI styling & responsive design
 ├── templates/
@@ -264,6 +329,9 @@ To deploy or update the static web application on GitHub Pages:
 ├── app.py                    # Flask Web App server & YOLOv11 2-stage vision engine
 ├── index.html                # Root HTML for GitHub Pages static hosting
 ├── requirements.txt          # Minimal Python dependency list
+├── Dockerfile                # Container image (Python 3.11 + CPU PyTorch + gunicorn)
+├── docker-compose.yml        # One-command start: docker compose up -d --build
+├── .dockerignore             # Files excluded from the Docker image
 ├── .gitignore                # Git ignore rules for cache & venv
 └── README.md                 # Full project documentation & step-by-step guide
 ```

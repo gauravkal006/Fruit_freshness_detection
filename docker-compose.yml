@@ -1,0 +1,8 @@
+services:
+  fruit-freshness:
+    build: .
+    image: fruit-freshness-detection:latest
+    container_name: fruit-freshness
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
