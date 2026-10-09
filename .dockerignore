@@ -1,0 +1,17 @@
+# Keep the Docker build context small - only app code + models are needed
+.git
+.gitignore
+.venv
+venv/
+ENV/
+__pycache__/
+*.py[cod]
+.vscode/
+.idea/
+runs/
+*.log
+FinalCodes/
+README.md
+Dockerfile
+docker-compose.yml
+.dockerignore
